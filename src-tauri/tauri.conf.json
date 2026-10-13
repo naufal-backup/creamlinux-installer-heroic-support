@@ -19,7 +19,7 @@
   },
   "productName": "Creamlinux",
   "mainBinaryName": "creamlinux",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "identifier": "com.creamlinux.dev",
   "app": {
     "withGlobalTauri": false,
@@ -40,9 +40,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERENzBFNjU0RTBBMUMyNzgKUldSNHdxSGdWT1p3M1liUE0vOGFCRkc2cEQwdWdRR2UyY2VmN3kzckNONCtsaGF0Y1d2WjdOWVEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdFNjlGREQyMTJGRTE1MTEKUldRUkZmNFMwdjFwZnJrRi90dUlhbzJBQ2F5SC95a2d4Vkd0WlB2L0w0Y2tvT1dmREZBeHR6akcK",
       "endpoints": [
-        "https://github.com/Novattz/creamlinux-installer/releases/latest/download/latest.json"
+        "https://github.com/naufal-backup/creamlinux-installer-heroic-support/releases/latest/download/latest.json"
       ]
     }
   }

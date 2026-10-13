@@ -1,3 +1,8 @@
+## [1.8.0] - 13-10-2026
+
+### Added
+- Heroic Games Launcher (native, Epic-only) support: scans `~/.config/heroic/legendaryConfig/legendary/installed.json` with standalone Legendary (`~/.config/legendary`) fallback, tolerant parsing, executable normalization, DLC skipping, per-game Heroic GameConfig / Wine prefix info, and Heroic/Legendary badges in the UI
+
 ## [1.7.1] - 12-07-2026
 
 ### Fixed
