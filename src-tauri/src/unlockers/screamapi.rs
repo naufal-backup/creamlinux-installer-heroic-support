@@ -171,6 +171,10 @@ impl Unlocker for ScreamAPI {
 }
 
 impl ScreamAPI {
+    /// User-facing error when the ScreamAPI cache is empty. Restarting alone
+    /// cannot fix it while the upstream repo is ToS-blocked, so point at the
+    /// manual zip override (Heroic/Epic flow is the only one needing this).
+    const NOT_CACHED_MSG: &'static str = "ScreamAPI is not cached and its GitHub repo is currently blocked, so automatic download fails. Quit the app, obtain a ScreamAPI release zip (ScreamAPI32.dll + ScreamAPI64.dll inside), then relaunch with SCREAMAPI_ZIP_PATH=/path/to/zip and retry the install.";
     // Direct install
 
     /// Extract ScreamAPI DLLs (+ default config) from a release zip.
@@ -337,7 +341,7 @@ impl ScreamAPI {
 
         let versions = crate::cache::read_versions()?;
         if versions.screamapi.latest.is_empty() {
-            return Err("ScreamAPI is not cached. Please restart the app.".to_string());
+            return Err(Self::NOT_CACHED_MSG.to_string());
         }
         let scream_dir = crate::cache::get_screamapi_version_dir(&versions.screamapi.latest)?;
 
@@ -410,7 +414,7 @@ impl ScreamAPI {
 
         let versions = crate::cache::read_versions()?;
         if versions.screamapi.latest.is_empty() {
-            return Err("ScreamAPI is not cached. Please restart the app.".to_string());
+            return Err(Self::NOT_CACHED_MSG.to_string());
         }
         let scream_dir = crate::cache::get_screamapi_version_dir(&versions.screamapi.latest)?;
         let exe_dir_path = Path::new(exe_dir);
@@ -608,12 +612,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manual_zip_source_missing_path_errors() {
-        let _g = ENV_LOCK.lock().unwrap();
+    async fn manual_zip_source_missing_path_errors() {        let _g = ENV_LOCK.lock().unwrap();
         std::env::set_var("SCREAMAPI_ZIP_PATH", "/nope/missing.zip");
         std::env::remove_var("SCREAMAPI_ZIP_URL");
         let err = ScreamAPI::manual_zip_source().await.unwrap_err();
         assert!(err.contains("does not exist"), "unexpected: {}", err);
         std::env::remove_var("SCREAMAPI_ZIP_PATH");
+    }
+
+    #[test]
+    fn not_cached_error_points_at_manual_zip() {
+        assert!(
+            ScreamAPI::NOT_CACHED_MSG.contains("SCREAMAPI_ZIP_PATH"),
+            "hint must mention the manual zip override"
+        );
+        assert!(
+            !ScreamAPI::NOT_CACHED_MSG.contains("restart the app."),
+            "must not suggest a plain restart, which cannot fix a blocked repo"
+        );
     }
 }
