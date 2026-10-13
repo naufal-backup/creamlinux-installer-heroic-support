@@ -11,7 +11,7 @@ CreamLinux is a GUI application for Linux that simplifies the management of DLC 
 - **Auto-discovery**: Automatically finds Steam games installed on your system
 - **Native support**: Installs CreamLinux for native Linux games
 - **Proton support**: Installs SmokeAPI for Windows games running through Proton
-- **Epic Games support**: Installs ScreamAPI for games running through Heroic/Legendary
+- **Epic Games support (Heroic native)**: Installs ScreamAPI/Koaloader for Epic games installed via Heroic Games Launcher (native install). Standalone Legendary (`~/.config/legendary`) is used as fallback. Flatpak/Snap Heroic and GOG/Amazon stores are out of scope for this fork.
 - **DLC management**: Easily select which DLCs to enable
 - **Modern UI**: Clean, responsive interface that's easy to use
 
@@ -158,6 +158,15 @@ If you're using the AppImage version, you can integrate it into your desktop env
 ```bash
 update-desktop-database ~/.local/share/applications
 ```
+
+## Heroic support (Epic, native — this fork)
+
+This fork targets **Heroic Games Launcher installed natively** (Epic store only):
+
+- Scan order: `[$XDG_CONFIG_HOME|~/.config]/heroic/legendaryConfig/legendary/installed.json` → `[$XDG_CONFIG_HOME|~/.config]/legendary/installed.json` (standalone fallback). Entries are deduped by `app_name` with Heroic taking priority.
+- Tolerant parsing: missing `title` falls back to `app_name`, missing `executable` becomes `""` (Koaloader resolver then searches by exe filename), Windows `\` separators are normalized, `is_dlc` entries are skipped, missing install paths are skipped with a warning.
+- Each game carries `store` (`epic`), `source` (`heroic-native` / `legendary-standalone`), `platform`, `version`, plus Heroic `GameConfig/<app>.json` path and detected `wine_prefix` when available.
+- ScreamAPI/Koaloader install logic is unchanged (operates on `install_path` on disk, which works the same under Heroic's Wine/Proton runner). Check Heroic's per-game Wine prefix in the log if a game fails to start after install.
 
 ## Troubleshooting
 

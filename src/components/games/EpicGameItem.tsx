@@ -58,6 +58,11 @@ const EpicGameItem = ({
       <div className="game-item-overlay">
         <div className="game-badges">
           <span className="status-badge epic">Epic</span>
+          {game.source === 'legendary-standalone' ? (
+            <span className="status-badge">Legendary</span>
+          ) : (
+            <span className="status-badge">Heroic</span>
+          )}
           {game.scream_installed && <span className="status-badge smoke">ScreamAPI</span>}
           {game.koaloader_installed && <span className="status-badge smoke">Koaloader</span>}
         </div>
