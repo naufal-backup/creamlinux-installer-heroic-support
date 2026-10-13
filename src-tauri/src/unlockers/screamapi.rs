@@ -524,8 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_dlls_accepts_release_zip_and_rejects_junk() {
-        let dir = tempfile::tempdir().unwrap();
+    fn extract_dlls_accepts_release_zip_and_rejects_junk() {        let dir = tempfile::tempdir().unwrap();
 
         // Build a fake release zip with both DLLs + noise.
         let zip_path = dir.path().join("ScreamAPI-v4.0.0.zip");
@@ -564,5 +563,57 @@ mod tests {
         let out2 = dir.path().join("out2");
         fs::create_dir_all(&out2).unwrap();
         assert!(ScreamAPI::extract_dlls(&bad, &out2).is_err());
+    }
+
+    /// Serialize SCREAMAPI_* env access across tests (env is process-global).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn write_fake_zip(path: &Path) {
+        let f = fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(f);
+        let opts =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("ScreamAPI32.dll", opts).unwrap();
+        zip.write_all(b"dll32").unwrap();
+        zip.start_file("ScreamAPI64.dll", opts).unwrap();
+        zip.write_all(b"dll64").unwrap();
+        zip.finish().unwrap();
+    }
+
+    #[tokio::test]
+    async fn manual_zip_source_none_when_unset() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("SCREAMAPI_ZIP_PATH");
+        std::env::remove_var("SCREAMAPI_ZIP_URL");
+        let res = ScreamAPI::manual_zip_source().await.unwrap();
+        assert!(res.is_none());
+    }
+
+    #[tokio::test]
+    async fn manual_zip_source_local_path_ok() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("ScreamAPI-v4.0.0.zip");
+        write_fake_zip(&zip_path);
+        std::env::set_var("SCREAMAPI_ZIP_PATH", &zip_path);
+        std::env::remove_var("SCREAMAPI_ZIP_URL");
+        std::env::remove_var("SCREAMAPI_VERSION");
+        let (version, path) = ScreamAPI::manual_zip_source()
+            .await
+            .unwrap()
+            .expect("should resolve local zip");
+        assert_eq!(version, "v4.0.0");
+        assert_eq!(path, zip_path);
+        std::env::remove_var("SCREAMAPI_ZIP_PATH");
+    }
+
+    #[tokio::test]
+    async fn manual_zip_source_missing_path_errors() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("SCREAMAPI_ZIP_PATH", "/nope/missing.zip");
+        std::env::remove_var("SCREAMAPI_ZIP_URL");
+        let err = ScreamAPI::manual_zip_source().await.unwrap_err();
+        assert!(err.contains("does not exist"), "unexpected: {}", err);
+        std::env::remove_var("SCREAMAPI_ZIP_PATH");
     }
 }
