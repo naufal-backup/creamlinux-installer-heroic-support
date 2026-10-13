@@ -1,3 +1,8 @@
+## [1.8.1] - 13-10-2026
+
+### Fixed
+- ScreamAPI cache download failing with HTTP 403 because the upstream acidicoala/ScreamAPI repo is ToS-blocked on GitHub: added SCREAMAPI_ZIP_PATH / SCREAMAPI_ZIP_URL (+ optional SCREAMAPI_VERSION) manual-zip override, clearer error hint, and fixed a mislabeled ScreamAPI cache error log
+
 ## [1.8.0] - 13-10-2026
 
 ### Added
