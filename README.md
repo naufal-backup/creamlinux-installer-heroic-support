@@ -160,13 +160,29 @@ update-desktop-database ~/.local/share/applications
 ```
 
 ## Heroic support (Epic, native — this fork)
-
 This fork targets **Heroic Games Launcher installed natively** (Epic store only):
 
 - Scan order: `[$XDG_CONFIG_HOME|~/.config]/heroic/legendaryConfig/legendary/installed.json` → `[$XDG_CONFIG_HOME|~/.config]/legendary/installed.json` (standalone fallback). Entries are deduped by `app_name` with Heroic taking priority.
 - Tolerant parsing: missing `title` falls back to `app_name`, missing `executable` becomes `""` (Koaloader resolver then searches by exe filename), Windows `\` separators are normalized, `is_dlc` entries are skipped, missing install paths are skipped with a warning.
 - Each game carries `store` (`epic`), `source` (`heroic-native` / `legendary-standalone`), `platform`, `version`, plus Heroic `GameConfig/<app>.json` path and detected `wine_prefix` when available.
 - ScreamAPI/Koaloader install logic is unchanged (operates on `install_path` on disk, which works the same under Heroic's Wine/Proton runner). Check Heroic's per-game Wine prefix in the log if a game fails to start after install.
+
+### ScreamAPI download blocked? (manual zip override — this fork)
+
+The upstream `acidicoala/ScreamAPI` GitHub repo is currently ToS-blocked, so the app's automatic download fails with `HTTP 403 Forbidden` / "ScreamAPI is not cached". As a workaround, obtain a ScreamAPI release zip yourself and point the app at it before launching:
+
+```bash
+SCREAMAPI_ZIP_PATH=/path/to/ScreamAPI-vX.Y.Z.zip ./creamlinux.AppImage
+# optionally: SCREAMAPI_VERSION=vX.Y.Z  (else derived from the file name)
+```
+
+or via direct URL:
+
+```bash
+SCREAMAPI_ZIP_URL=https://example.com/ScreamAPI-vX.Y.Z.zip ./creamlinux.AppImage
+```
+
+The zip must contain `ScreamAPI32.dll` and `ScreamAPI64.dll`. Once seeded, restart is not needed — the next install attempt uses the cache.
 
 ## Troubleshooting
 

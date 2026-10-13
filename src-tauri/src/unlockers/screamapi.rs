@@ -56,7 +56,28 @@ impl Unlocker for ScreamAPI {
     }
 
     async fn download_to_cache() -> Result<String, String> {
-        let version = Self::get_latest_version().await?;
+        // Manual override: the upstream ScreamAPI GitHub repo is ToS-blocked,
+        // so api.github.com answers 403 for it. Users can point the app at a
+        // self-obtained release zip instead:
+        //   SCREAMAPI_ZIP_PATH=/path/to/ScreamAPI-vX.Y.Z.zip  (local file)
+        //   SCREAMAPI_ZIP_URL=https://.../ScreamAPI-vX.Y.Z.zip (direct URL)
+        //   SCREAMAPI_VERSION=vX.Y.Z  (optional, else derived from file name)
+        if let Some((version, zip_path)) = Self::manual_zip_source().await? {
+            let version_dir = crate::cache::get_screamapi_version_dir(&version)?;
+            Self::extract_dlls(&zip_path, &version_dir)?;
+            info!(
+                "ScreamAPI version {} seeded from manual source successfully",
+                version
+            );
+            return Ok(version);
+        }
+
+        let version = Self::get_latest_version().await.map_err(|e| {
+            format!(
+                "{}. NOTE: the upstream acidicoala/ScreamAPI repo is currently ToS-blocked on GitHub (API returns 403); set SCREAMAPI_ZIP_PATH or SCREAMAPI_ZIP_URL to a self-obtained release zip instead",
+                e
+            )
+        })?;
         info!("Downloading ScreamAPI version {}...", version);
 
         let client = reqwest::Client::new();
@@ -119,8 +140,44 @@ impl Unlocker for ScreamAPI {
             .map_err(|e| format!("Failed to write zip file: {}", e))?;
 
         let version_dir = crate::cache::get_screamapi_version_dir(&version)?;
+        Self::extract_dlls(&zip_path, &version_dir)?;
+
+        info!("ScreamAPI version {} downloaded to cache successfully", version);
+        Ok(version)
+    }
+
+
+    /// context = "" -> direct install (replace EOSSDK DLLs)
+    /// context = "koaloader" -> payload install (drop DLL in exe dir)
+    async fn install_to_game(game_path: &str, context: &str) -> Result<(), String> {
+        if context == "koaloader" {
+            Self::install_as_koaloader_payload(game_path).await
+        } else {
+            Self::install_direct(game_path).await
+        }
+    }
+
+    async fn uninstall_from_game(game_path: &str, context: &str) -> Result<(), String> {
+        if context == "koaloader" {
+            Self::uninstall_as_koaloader_payload(game_path).await
+        } else {
+            Self::uninstall_direct(game_path).await
+        }
+    }
+
+    fn name() -> &'static str {
+        "ScreamAPI"
+    }
+}
+
+impl ScreamAPI {
+    // Direct install
+
+    /// Extract ScreamAPI DLLs (+ default config) from a release zip.
+    /// Shared by the GitHub flow and the manual SCREAMAPI_ZIP_* override.
+    fn extract_dlls(zip_path: &Path, version_dir: &Path) -> Result<(), String> {
         let file =
-            fs::File::open(&zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+            fs::File::open(zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
         let mut archive =
             ZipArchive::new(file).map_err(|e| format!("Failed to read zip archive: {}", e))?;
 
@@ -149,35 +206,119 @@ impl Unlocker for ScreamAPI {
             }
         }
 
-        info!("ScreamAPI version {} downloaded to cache successfully", version);
-        Ok(version)
-    }
-
-    /// context = "" -> direct install (replace EOSSDK DLLs)
-    /// context = "koaloader" -> payload install (drop DLL in exe dir)
-    async fn install_to_game(game_path: &str, context: &str) -> Result<(), String> {
-        if context == "koaloader" {
-            Self::install_as_koaloader_payload(game_path).await
-        } else {
-            Self::install_direct(game_path).await
+        // Sanity check: the cache validator requires both bitness DLLs.
+        for required in &["ScreamAPI32.dll", "ScreamAPI64.dll"] {
+            if !version_dir.join(required).exists() {
+                return Err(format!(
+                    "Zip did not contain required file {} (is this a ScreamAPI release zip?)",
+                    required
+                ));
+            }
         }
+
+        Ok(())
     }
 
-    async fn uninstall_from_game(game_path: &str, context: &str) -> Result<(), String> {
-        if context == "koaloader" {
-            Self::uninstall_as_koaloader_payload(game_path).await
-        } else {
-            Self::uninstall_direct(game_path).await
+    /// Resolve a manual ScreamAPI zip source from the environment.
+    /// Returns (version, local zip path) or None when no override is set.
+    /// A temp copy is made for URL sources; for local paths the file is used
+    /// directly. The temp dir is deliberately leaked so the zip outlives the
+    /// download (it is tiny and lives in $TMPDIR).
+    async fn manual_zip_source() -> Result<Option<(String, PathBuf)>, String> {
+        let local = std::env::var("SCREAMAPI_ZIP_PATH")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let url = std::env::var("SCREAMAPI_ZIP_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
+        if local.is_none() && url.is_none() {
+            return Ok(None);
         }
+
+        if let Some(path) = local {
+            let zip_path = PathBuf::from(&path);
+            if !zip_path.is_file() {
+                return Err(format!(
+                    "SCREAMAPI_ZIP_PATH does not exist: {}",
+                    zip_path.display()
+                ));
+            }
+            let version = Self::manual_version(Some(&zip_path));
+            info!("Using manual ScreamAPI zip: {}", zip_path.display());
+            return Ok(Some((version, zip_path)));
+        }
+
+        let url = url.expect("checked above");
+        info!("Downloading manual ScreamAPI zip from: {}", url);
+        let response = reqwest::Client::new()
+            .get(&url)
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download SCREAMAPI_ZIP_URL: {}", e))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Failed to download SCREAMAPI_ZIP_URL: HTTP {}",
+                response.status()
+            ));
+        }
+        let content = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read response bytes: {}", e))?;
+
+        let file_name = url.rsplit('/').next().unwrap_or("screamapi.zip");
+        let temp_dir = tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+        let zip_path = temp_dir.path().join(file_name);
+        fs::write(&zip_path, &content)
+            .map_err(|e| format!("Failed to write zip file: {}", e))?;
+        // Keep the temp dir alive past this function (see doc comment).
+        let _ = temp_dir.keep();
+
+        let version = Self::manual_version(Some(&zip_path));
+        Ok(Some((version, zip_path)))
     }
 
-    fn name() -> &'static str {
-        "ScreamAPI"
+    /// Version label for a manual zip: explicit SCREAMAPI_VERSION env wins,
+    /// else a `vX.Y.Z` infix is parsed from the file name, else "manual".
+    fn manual_version(zip_path: Option<&Path>) -> String {
+        if let Ok(v) = std::env::var("SCREAMAPI_VERSION") {
+            if !v.trim().is_empty() {
+                return v.trim().to_string();
+            }
+        }
+        if let Some(p) = zip_path {
+            if let Some(v) = Self::version_from_filename(p) {
+                return v;
+            }
+        }
+        "manual".to_string()
     }
-}
 
-impl ScreamAPI {
-    // Direct install
+    /// Parse e.g. "ScreamAPI-v4.0.0.zip" -> "v4.0.0".
+    fn version_from_filename(path: &Path) -> Option<String> {
+        let name = path.file_name()?.to_string_lossy().to_lowercase();
+        // find a 'v' followed by digit.digit
+        let bytes = name.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'v' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                let mut j = i + 1;
+                while j < bytes.len()
+                    && (bytes[j].is_ascii_digit() || bytes[j] == b'.')
+                {
+                    j += 1;
+                }
+                let candidate = name[i..j].trim_matches('.');
+                if candidate.contains('.') {
+                    return Some(candidate.to_string());
+                }
+            }
+            i += 1;
+        }
+        None
+    }
 
     async fn install_direct(game_path: &str) -> Result<(), String> {
         info!("Installing ScreamAPI (direct) to: {}", game_path);
@@ -335,5 +476,93 @@ impl ScreamAPI {
             }
         }
         found
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn version_from_filename_parses_tag() {
+        assert_eq!(
+            ScreamAPI::version_from_filename(Path::new("ScreamAPI-v4.0.0.zip")),
+            Some("v4.0.0".to_string())
+        );
+        assert_eq!(
+            ScreamAPI::version_from_filename(Path::new("/tmp/ScreamAPI-v3.2.1.zip")),
+            Some("v3.2.1".to_string())
+        );
+        assert_eq!(
+            ScreamAPI::version_from_filename(Path::new("screamapi.zip")),
+            None
+        );
+    }
+
+    #[test]
+    fn manual_version_prefers_env() {
+        // SAFETY: tests run single-threaded per binary by default only with
+        // --test-threads=1; env mutation here is scoped and restored.
+        std::env::set_var("SCREAMAPI_VERSION", "v9.9.9");
+        let v = ScreamAPI::manual_version(Some(Path::new("ScreamAPI-v4.0.0.zip")));
+        std::env::remove_var("SCREAMAPI_VERSION");
+        assert_eq!(v, "v9.9.9");
+    }
+
+    #[test]
+    fn manual_version_falls_back_to_filename_then_manual() {
+        std::env::remove_var("SCREAMAPI_VERSION");
+        assert_eq!(
+            ScreamAPI::manual_version(Some(Path::new("ScreamAPI-v4.0.0.zip"))),
+            "v4.0.0"
+        );
+        assert_eq!(
+            ScreamAPI::manual_version(Some(Path::new("random.zip"))),
+            "manual"
+        );
+        assert_eq!(ScreamAPI::manual_version(None), "manual");
+    }
+
+    #[test]
+    fn extract_dlls_accepts_release_zip_and_rejects_junk() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Build a fake release zip with both DLLs + noise.
+        let zip_path = dir.path().join("ScreamAPI-v4.0.0.zip");
+        {
+            let f = fs::File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(f);
+            let opts =
+                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("ScreamAPI32.dll", opts).unwrap();
+            zip.write_all(b"dll32").unwrap();
+            zip.start_file("nested/ScreamAPI64.dll", opts).unwrap();
+            zip.write_all(b"dll64").unwrap();
+            zip.start_file("readme.txt", opts).unwrap();
+            zip.write_all(b"noise").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let out = dir.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        ScreamAPI::extract_dlls(&zip_path, &out).unwrap();
+        assert!(out.join("ScreamAPI32.dll").exists());
+        assert!(out.join("ScreamAPI64.dll").exists());
+        assert!(!out.join("readme.txt").exists());
+
+        // Junk zip missing the 64-bit DLL must be rejected.
+        let bad = dir.path().join("bad.zip");
+        {
+            let f = fs::File::create(&bad).unwrap();
+            let mut zip = zip::ZipWriter::new(f);
+            let opts =
+                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("ScreamAPI32.dll", opts).unwrap();
+            zip.write_all(b"dll32").unwrap();
+            zip.finish().unwrap();
+        }
+        let out2 = dir.path().join("out2");
+        fs::create_dir_all(&out2).unwrap();
+        assert!(ScreamAPI::extract_dlls(&bad, &out2).is_err());
     }
 }
